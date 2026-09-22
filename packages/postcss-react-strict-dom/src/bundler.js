@@ -20,8 +20,9 @@ module.exports = function createBundler() {
   // Transforms the source code using Babel, extracting styles and storing them.
   async function transform(id, sourceCode, babelConfig, options) {
     const { isDev, shouldSkipTransformError } = options;
-    const { code, map, metadata } = await babel
-      .transformAsync(sourceCode, {
+    let result;
+    try {
+      result = await babel.transformAsync(sourceCode, {
         filename: id,
         caller: {
           name: 'postcss-react-strict-dom',
@@ -29,21 +30,33 @@ module.exports = function createBundler() {
           isDev
         },
         ...babelConfig
-      })
-      .catch((error) => {
-        if (shouldSkipTransformError) {
-          console.warn(
-            `[postcss-react-strict-dom] Failed to transform "${id}": ${error.message}`
-          );
-
-          return { code: sourceCode, map: null, metadata: {} };
-        }
-        throw error;
       });
+    } catch (error) {
+      if (shouldSkipTransformError) {
+        console.warn(
+          `[postcss-react-strict-dom] Failed to transform "${id}": ${error.message}`
+        );
 
+        // Keep the old styles of the file. The error is often a temporary
+        // syntax error during an edit.
+        return { code: sourceCode, map: null, metadata: {} };
+      }
+      throw error;
+    }
+
+    if (result == null) {
+      // Babel ignores the file (for example, with the `ignore` option), so
+      // the file creates no styles
+      result = { code: sourceCode, map: null, metadata: {} };
+    }
+
+    const { code, map, metadata } = result;
     const stylex = metadata.stylex;
     if (stylex != null && stylex.length > 0) {
       styleXRulesMap.set(id, stylex);
+    } else {
+      // The file no longer creates styles; remove its old styles
+      styleXRulesMap.delete(id);
     }
 
     return { code, map, metadata };

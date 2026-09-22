@@ -172,6 +172,8 @@ function createBuilder() {
           return;
         }
         if (!bundler.shouldTransform(contents)) {
+          // The file no longer uses React Strict DOM; remove its old styles
+          bundler.remove(filePath);
           return;
         }
         return bundler.transform(filePath, contents, babelConfig, {

@@ -179,23 +179,46 @@ describe('postcss-react-strict-dom', () => {
 `);
   });
 
+  test('skips files that Babel ignores', async () => {
+    const result = await runPlugin({
+      babelConfig: {
+        configFile: path.join(fixturesDir, '.babelrc.js'),
+        ignore: [path.join(fixturesDir, 'styles-second.js')]
+      }
+    });
+
+    expect(result.css).toContain('red');
+    expect(result.css).not.toContain('green');
+  });
+
   describe('incremental builds', () => {
     const RED = `import { css } from 'react-strict-dom';
 export const styles = css.create({ box: { color: 'red' } });
 `;
 
+    const NO_STYLES = `import { css } from 'react-strict-dom';
+export const styles = {};
+`;
+
     let tempDir;
+    let mtime;
 
     beforeEach(() => {
       tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'postcss-rsd-'));
+      mtime = Date.now() / 1000;
     });
 
     afterEach(() => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
+    // Gives each write a different mtime, because the builder uses the mtime
+    // to find changed files.
     function writeFile(name, contents) {
-      fs.writeFileSync(path.join(tempDir, name), contents);
+      const file = path.join(tempDir, name);
+      fs.writeFileSync(file, contents);
+      mtime += 1;
+      fs.utimesSync(file, mtime, mtime);
     }
 
     // Returns a function that runs the same plugin instance on each call,
@@ -244,6 +267,39 @@ export const styles = css.create({ box: { color: 'red' } });
         expect(await createWatcher()()).not.toContain('color:red');
       } finally {
         spy.mockRestore();
+      }
+    });
+
+    test('removes the styles of a file that no longer creates styles', async () => {
+      writeFile('a.js', RED);
+      const build = createWatcher();
+      expect(await build()).toContain('color:red');
+
+      writeFile('a.js', NO_STYLES);
+      expect(await build()).not.toContain('color:red');
+    });
+
+    test('removes the styles of a file that no longer uses react-strict-dom', async () => {
+      writeFile('a.js', RED);
+      const build = createWatcher();
+      expect(await build()).toContain('color:red');
+
+      writeFile('a.js', 'export const styles = {};\n');
+      expect(await build()).not.toContain('color:red');
+    });
+
+    test('keeps the styles of a file that fails to transform', async () => {
+      writeFile('a.js', RED);
+      const build = createWatcher();
+      expect(await build()).toContain('color:red');
+
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        writeFile('a.js', `${RED}export const broken = ;\n`);
+        expect(await build()).toContain('color:red');
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
       }
     });
   });
