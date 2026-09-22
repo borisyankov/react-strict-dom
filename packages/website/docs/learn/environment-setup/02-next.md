@@ -72,6 +72,8 @@ const config = {
 export default config;
 ```
 
+In development with Turbopack, the plugin keeps a cache of extracted styles in `node_modules/.cache/postcss-react-strict-dom`. With the cache, Turbopack's short-lived PostCSS workers do not transform all files again on each rebuild. Each dev server session has its own cache, so a restart of the dev server transforms all files again. If the generated CSS is out of date, for example after a change to values from `css.defineConsts` that other files use, restart the dev server. The plugin does not use the cache if `babelConfig` contains functions, because it cannot find changes to them.
+
 ## Next.js configuration
 
 Create or edit the `next.config.js` file as follows. Note that below you will find config for both turbopack or webpack.

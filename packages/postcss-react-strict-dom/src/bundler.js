@@ -18,11 +18,16 @@ module.exports = function createBundler() {
   }
 
   // Transforms the source code using Babel, extracting styles and storing them.
+  // Returns the result with the Babel config files that Babel loaded, or null
+  // if the transform fails and the error is skipped.
   async function transform(id, sourceCode, babelConfig, options) {
     const { isDev, shouldSkipTransformError } = options;
-    let result;
+    let result = null;
+    let configFiles = [];
     try {
-      result = await babel.transformAsync(sourceCode, {
+      // Load the config once, for the transform and for the list of config
+      // files
+      const partialConfig = await babel.loadPartialConfigAsync({
         filename: id,
         caller: {
           name: 'postcss-react-strict-dom',
@@ -31,6 +36,10 @@ module.exports = function createBundler() {
         },
         ...babelConfig
       });
+      if (partialConfig != null) {
+        configFiles = Array.from(partialConfig.files);
+        result = await babel.transformAsync(sourceCode, partialConfig.options);
+      }
     } catch (error) {
       if (shouldSkipTransformError) {
         console.warn(
@@ -39,7 +48,7 @@ module.exports = function createBundler() {
 
         // Keep the old styles of the file. The error is often a temporary
         // syntax error during an edit.
-        return { code: sourceCode, map: null, metadata: {} };
+        return null;
       }
       throw error;
     }
@@ -59,12 +68,24 @@ module.exports = function createBundler() {
       styleXRulesMap.delete(id);
     }
 
-    return { code, map, metadata };
+    return { code, map, metadata, configFiles };
   }
 
   // Removes the stored styles for the specified file.
   function remove(id) {
     styleXRulesMap.delete(id);
+  }
+
+  // Returns all stored styles, so that they can be kept in a cache.
+  function getRules() {
+    return Array.from(styleXRulesMap.entries());
+  }
+
+  // Adds styles from a cache.
+  function restore(entries) {
+    for (const [id, rules] of entries) {
+      styleXRulesMap.set(id, rules);
+    }
   }
 
   //  Bundles all collected styles into a single CSS string.
@@ -82,6 +103,8 @@ module.exports = function createBundler() {
     shouldTransform,
     transform,
     remove,
+    getRules,
+    restore,
     bundle
   };
 };
