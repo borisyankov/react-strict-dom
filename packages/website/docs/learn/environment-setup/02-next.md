@@ -64,7 +64,7 @@ const config = {
         'node_modules/<package-name>/*.js'
       ],
       babelConfig: babelLoader,
-      useLayers: true,
+      useCSSLayers: true,
     }
   },
 };
