@@ -7,6 +7,8 @@
 
 'use strict';
 
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const postcss = require('postcss');
 const createPlugin = require('../src/plugin');
@@ -175,5 +177,74 @@ describe('postcss-react-strict-dom', () => {
 .x193iq5w{max-width:100%}
 }"
 `);
+  });
+
+  describe('incremental builds', () => {
+    const RED = `import { css } from 'react-strict-dom';
+export const styles = css.create({ box: { color: 'red' } });
+`;
+
+    let tempDir;
+
+    beforeEach(() => {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'postcss-rsd-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    function writeFile(name, contents) {
+      fs.writeFileSync(path.join(tempDir, name), contents);
+    }
+
+    // Returns a function that runs the same plugin instance on each call,
+    // like a bundler in watch mode.
+    function createWatcher() {
+      const plugin = createPlugin()({
+        cwd: tempDir,
+        include: ['*.js'],
+        babelConfig: {
+          configFile: path.join(fixturesDir, '.babelrc.js')
+        }
+      });
+      const processor = postcss([plugin]);
+      return async () => {
+        const result = await processor.process('@react-strict-dom;', {
+          from: path.join(tempDir, 'input.css')
+        });
+        return result.css;
+      };
+    }
+
+    test('removes the styles of deleted files', async () => {
+      writeFile('a.js', RED);
+      const build = createWatcher();
+      expect(await build()).toContain('color:red');
+
+      fs.rmSync(path.join(tempDir, 'a.js'));
+      expect(await build()).not.toContain('color:red');
+    });
+
+    test('handles a file that is deleted during a build', async () => {
+      writeFile('a.js', RED);
+      const file = path.join(tempDir, 'a.js');
+      const { readFileSync } = fs;
+      // Delete the file after the glob finds it, but before the builder
+      // reads it
+      const spy = jest
+        .spyOn(fs, 'readFileSync')
+        .mockImplementation((name, ...args) => {
+          if (name === file) {
+            fs.rmSync(file, { force: true });
+          }
+          return readFileSync(name, ...args);
+        });
+      try {
+        expect(await createWatcher()()).not.toContain('color:red');
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 });

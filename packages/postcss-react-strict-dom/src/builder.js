@@ -60,6 +60,27 @@ function parseDependency(fileOrGlob) {
   return message;
 }
 
+// Returns the mtime of a file, or null if the file does not exist.
+function getMtime(file) {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+// Returns the contents of a file, or null if the file does not exist.
+function readFile(file) {
+  try {
+    return fs.readFileSync(file, 'utf-8');
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
 // Creates a builder for transforming files and bundling styles
 function createBuilder() {
   let config = null;
@@ -102,26 +123,31 @@ function createBuilder() {
     });
   }
 
+  // Forgets a file and removes its stored styles.
+  function removeFile(file) {
+    const { cwd } = getConfig();
+    fileModifiedMap.delete(file);
+    // The bundler stores rules by absolute path
+    bundler.remove(path.resolve(cwd, file));
+  }
+
   // Transforms the included files, bundles the CSS, and returns the result.
   async function build({ shouldSkipTransformError }) {
     const { cwd, babelConfig, useCSSLayers, isDev } = getConfig();
 
     const files = getFiles();
+    const fileSet = new Set(files);
     const filesToTransform = [];
 
     // Remove deleted files since the last build
     for (const file of fileModifiedMap.keys()) {
-      if (!files.includes(file)) {
-        fileModifiedMap.delete(file);
-        bundler.remove(file);
+      if (!fileSet.has(file)) {
+        removeFile(file);
       }
     }
 
     for (const file of files) {
-      const filePath = path.resolve(cwd, file);
-      const mtimeMs = fs.existsSync(filePath)
-        ? fs.statSync(filePath).mtimeMs
-        : -Infinity;
+      const mtimeMs = getMtime(path.resolve(cwd, file));
 
       // Skip files that have not been modified since the last build
       // On first run, all files will be transformed
@@ -139,7 +165,12 @@ function createBuilder() {
     await Promise.all(
       filesToTransform.map((file) => {
         const filePath = path.resolve(cwd, file);
-        const contents = fs.readFileSync(filePath, 'utf-8');
+        const contents = readFile(filePath);
+        if (contents == null) {
+          // The file was deleted after the glob found it
+          removeFile(file);
+          return;
+        }
         if (!bundler.shouldTransform(contents)) {
           return;
         }
